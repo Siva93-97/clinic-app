@@ -50,6 +50,7 @@ function displayPastFollowups() {
             <b>Sex:</b> ${p.sex}<br>
             <b>Mobile:</b> ${mobileLink}<br>
             <b>Diagnosis:</b> ${p.diagnosis}<br>
+            <b>Notes:</b> ${p.notes || ''}<br>
             <b>Follow-up:</b> ${p.followup}<br>
         `;
 
@@ -136,7 +137,8 @@ function editPatient(index) {
     document.getElementById('visitDate').value = p.visitDate || '';
     document.getElementById('name').value = p.name || '';
     document.getElementById('followup').value = p.followup || '';
-    document.getElementById('mobile').value = p.mobile || '';
+    const mobileEl = document.getElementById('mobile');
+    if (mobileEl) { mobileEl.value = p.mobile || ''; mobileEl.readOnly = false; }
     document.getElementById('age').value = p.age || '';
     document.getElementById('sex').value = p.sex || '';
     document.getElementById('diagnosis').value = p.diagnosis || '';
@@ -144,6 +146,9 @@ function editPatient(index) {
     editingIndex = index;
     const saveBtn = document.getElementById('saveBtn');
     if (saveBtn) saveBtn.textContent = 'Update Patient';
+
+    // when editing, clear the "save contact" checkbox - only save new contacts explicitly
+    const saveContactCheckbox = document.getElementById('saveContact'); if (saveContactCheckbox) saveContactCheckbox.checked = false;
 
     document.getElementById('form').style.display = 'block';
     const nameInput = document.getElementById('name');
@@ -157,10 +162,14 @@ function cancelEdit() {
     // clear form fields
     const fields = ['visitDate','name','followup','mobile','age','sex','diagnosis'];
     fields.forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    const mobileInput = document.getElementById('mobile'); if (mobileInput) mobileInput.readOnly = true;
+    const saveContactCheckbox = document.getElementById('saveContact'); if (saveContactCheckbox) saveContactCheckbox.checked = false;
     document.getElementById('form').style.display = 'none';
 }
 function showForm() {
     document.getElementById("form").style.display = "block";
+    const mobileEl = document.getElementById('mobile'); if (mobileEl) mobileEl.readOnly = true;
+    const saveContactCheckbox = document.getElementById('saveContact'); if (saveContactCheckbox) saveContactCheckbox.checked = false;
 }
 
 // Theme handling: apply saved theme or default
@@ -173,6 +182,7 @@ function setTheme(theme) {
     if (logo) {
         if (theme === 'panda') logo.textContent = '🐼';
         else if (theme === 'light') logo.textContent = '🩺';
+        else if (theme === 'windows') logo.textContent = '📱';
         else logo.textContent = '🩺';
     }
     const selector = document.getElementById('themeSelector');
@@ -187,6 +197,21 @@ function initTheme() {
 // initialize theme on load
 document.addEventListener('DOMContentLoaded', initTheme);
 
+// Non-blocking inline notice (toast)
+function showNotice(message, timeout = 3000) {
+    const n = document.createElement('div');
+    n.className = 'notice';
+    n.textContent = message;
+    document.body.appendChild(n);
+    // force reflow to allow transition
+    void n.offsetWidth;
+    n.classList.add('show');
+    setTimeout(() => {
+        n.classList.remove('show');
+        setTimeout(() => n.remove(), 300);
+    }, timeout);
+}
+
 function savePatient() {
     let patient = {
         visitDate: document.getElementById("visitDate").value,
@@ -195,6 +220,7 @@ function savePatient() {
         age: document.getElementById("age").value,
         sex: document.getElementById("sex").value,
         diagnosis: document.getElementById("diagnosis").value,
+        notes: document.getElementById("notes").value,
         followup: document.getElementById("followup").value
     };
 if (patient.followup && patient.followup < patient.visitDate) {
@@ -215,6 +241,16 @@ if (patient.followup && patient.followup < patient.visitDate) {
     }
     localStorage.setItem("patients", JSON.stringify(patients));
 
+    // Optionally save contact to device when user checked the checkbox
+    const saveContactCheckbox = document.getElementById('saveContact');
+    if (saveContactCheckbox && saveContactCheckbox.checked) {
+        try {
+            saveContactToDevice(patient);
+        } catch (err) {
+            console.error('Saving contact failed', err);
+        }
+    }
+
     // Clear the inputs manually (the form is a div, not a <form>)
     const visitInput = document.getElementById("visitDate");
     const nameInput = document.getElementById("name");
@@ -223,6 +259,7 @@ if (patient.followup && patient.followup < patient.visitDate) {
     const ageInput = document.getElementById("age");
     const sexInput = document.getElementById("sex");
     const diagnosisInput = document.getElementById("diagnosis");
+    const notesInput = document.getElementById("notes");
 
     if (nameInput) nameInput.value = "";
     if (visitInput) visitInput.value = "";
@@ -230,10 +267,11 @@ if (patient.followup && patient.followup < patient.visitDate) {
         followupInput.value = "";
         followupInput.min = "";
     }
-    if (mobileInput) mobileInput.value = "";
+    if (mobileInput) { mobileInput.value = ""; mobileInput.readOnly = true; }
     if (ageInput) ageInput.value = "";
     if (sexInput) sexInput.value = "";
     if (diagnosisInput) diagnosisInput.value = "";
+    if (notesInput) notesInput.value = "";
 
     // Focus the first input for quick next entry
     if (visitInput) visitInput.focus();
@@ -245,7 +283,7 @@ if (patient.followup && patient.followup < patient.visitDate) {
 
     displayPatients();
     displayPastFollowups();
-    alert('Patient saved');
+    showNotice('Patient saved');
 }
 
 function displayPatients() {
@@ -301,6 +339,7 @@ function displayPatients() {
             <b>Sex:</b> ${p.sex}<br>
             <b>Mobile:</b> ${mobileLink}<br>
             <b>Diagnosis:</b> ${p.diagnosis}<br>
+            <b>Notes:</b> ${p.notes || ''}<br>
             <b>Follow-up:</b> ${p.followup}<br><br>
             <button onclick="this.parentElement.style.display='none'">Hide</button>
             <button onclick="editPatient(${patients.indexOf(p)})"
@@ -356,17 +395,18 @@ function exportCSV() {
     }
 
     let csv =
-        "Name,Age,Sex,Mobile,Diagnosis,Visit Date,Follow-up Date\n";
+        "Name,Age,Sex,Mobile,Notes,Diagnosis,Visit Date,Follow-up Date\n";
 
     patients.forEach(p => {
         csv +=
-            `"${p.name}",` +
-            `"${p.age}",` +
-            `"${p.sex}",` +
-            `"${p.mobile || ""}",` +
-            `"${p.diagnosis}",` +
-            `"${p.visitDate || ""}",` +
-            `"${p.followup || ""}"\n`;
+                `"${p.name}",` +
+                `"${p.age}",` +
+                `"${p.sex}",` +
+                `"${p.mobile || ""}",` +
+                `"${p.notes || ""}",` +
+                `"${p.diagnosis}",` +
+                `"${p.visitDate || ""}",` +
+                `"${p.followup || ""}"\n`;
     });
 
     let blob = new Blob([csv], { type: "text/csv" });
@@ -395,6 +435,7 @@ function exportPDF() {
         p.age,
         p.sex,
         p.mobile || "",
+        p.notes || "",
         p.diagnosis,
         p.visitDate || "",
         p.followup || ""
@@ -407,6 +448,7 @@ function exportPDF() {
             "Age",
             "Sex",
             "Mobile",
+            "Notes",
             "Diagnosis",
             "Visit Date",
             "Follow-up Date"
@@ -427,6 +469,87 @@ function setFollowupMinDate() {
     if (visitDate) {
         followupInput.min = visitDate;
     }
+}
+
+function chooseContact() {
+    if (navigator.contacts && typeof navigator.contacts.select === 'function') {
+        try {
+            navigator.contacts.select(['name','tel'], {multiple:false})
+            .then(contacts => {
+                if (!contacts || contacts.length === 0) return;
+                const c = contacts[0];
+                const name = Array.isArray(c.name) ? c.name[0] : c.name || '';
+                const tel = Array.isArray(c.tel) ? c.tel[0] : c.tel || '';
+                if (name && document.getElementById('name')) document.getElementById('name').value = name;
+                const mobileEl = document.getElementById('mobile');
+                if (tel && mobileEl) { mobileEl.value = tel; mobileEl.readOnly = false; mobileEl.focus(); }
+            })
+            .catch(err => {
+                console.error('Contact picker error', err);
+                alert('Could not access contacts: ' + (err && err.message ? err.message : err));
+            });
+        } catch (err) {
+            console.error(err);
+            alert('Contact picker failed: ' + err.message);
+        }
+    } else {
+        const modal = document.getElementById('contactModal');
+        if (modal) modal.style.display = 'flex';
+        else alert("Contact Picker not supported in this browser. Please enter the number manually.");
+    }
+}
+
+function hideContactModal() {
+    const modal = document.getElementById('contactModal');
+    if (modal) modal.style.display = 'none';
+}
+
+function enableManualMobile() {
+    const mobile = document.getElementById('mobile');
+    if (mobile) {
+        mobile.removeAttribute('readonly');
+        mobile.focus();
+    }
+    hideContactModal();
+}
+
+function saveContactToDevice(p) {
+    if (!p || (!p.name && !p.mobile)) return;
+
+    // If an API to programmatically save contacts exists, try it first (non-standard / experimental)
+    if (navigator.contacts && typeof navigator.contacts.save === 'function') {
+        try {
+            navigator.contacts.save && navigator.contacts.save({name:[p.name || ''], tel:[p.mobile || '']})
+            .then(() => showNotice('Contact saved to device.'))
+            .catch(err => {
+                console.warn('contacts.save failed, falling back to vCard', err);
+                vcardFallback();
+            });
+            return;
+        } catch (err) {
+            console.warn('contacts.save threw', err);
+            // fall through to vCard fallback
+        }
+    }
+
+    // vCard fallback - downloads a .vcf which users can open on their device to save to contacts
+    function vcardFallback() {
+        const name = p.name || '';
+        const tel = p.mobile || '';
+        const vcard = `BEGIN:VCARD\nVERSION:3.0\nFN:${name}\nTEL;TYPE=CELL:${tel}\nEND:VCARD`;
+        const blob = new Blob([vcard], { type: 'text/vcard' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${(name || 'contact').replace(/\s+/g,'_')}.vcf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        showNotice('vCard downloaded — open it on your device to save the contact');
+    }
+
+    vcardFallback();
 }
 
 // --- Custom export modal controls and range export functions ---
@@ -463,13 +586,14 @@ function exportCSVRange(fromDateStr, toDateStr) {
     const filtered = patients.filter(p => p.followup && new Date(p.followup) >= from && new Date(p.followup) <= to);
     if (filtered.length === 0) { alert('No records in selected range'); return; }
 
-    let csv = "Name,Age,Sex,Mobile,Diagnosis,Visit Date,Follow-up Date\n";
+    let csv = "Name,Age,Sex,Mobile,Notes,Diagnosis,Visit Date,Follow-up Date\n";
     filtered.forEach(p => {
         csv +=
             `"${p.name}",` +
             `"${p.age}",` +
             `"${p.sex}",` +
             `"${p.mobile || ""}",` +
+            `"${p.notes || ""}",` +
             `"${p.diagnosis}",` +
             `"${p.visitDate || ""}",` +
             `"${p.followup || ""}"\n`;
@@ -520,6 +644,7 @@ function triggerImportCSV() {
                         else if (key.includes('age')) obj.age = v;
                         else if (key.includes('sex')) obj.sex = v;
                         else if (key.includes('mobile')) obj.mobile = v;
+                        else if (key.includes('note')) obj.notes = v;
                         else if (key.includes('diagnosis')) obj.diagnosis = v;
                         else if (key.includes('visit')) obj.visitDate = v;
                         else if (key.includes('follow')) obj.followup = v;
@@ -533,7 +658,7 @@ function triggerImportCSV() {
                 localStorage.setItem('patients', JSON.stringify(patients));
                 displayPatients();
                 displayPastFollowups();
-                alert('Import completed. ' + patients.length + ' records restored.');
+                showNotice('Import completed — ' + patients.length + ' records restored.');
             } catch (err) {
                 console.error(err);
                 alert('Failed to parse CSV: ' + err.message);
@@ -603,6 +728,7 @@ function exportPDFRange(fromDateStr, toDateStr) {
         p.age,
         p.sex,
         p.mobile || "",
+        p.notes || "",
         p.diagnosis,
         p.visitDate || "",
         p.followup || ""
@@ -610,7 +736,7 @@ function exportPDFRange(fromDateStr, toDateStr) {
 
     doc.autoTable({
         startY: 25,
-        head: [["Name","Age","Sex","Mobile","Diagnosis","Visit Date","Follow-up Date"]],
+        head: [["Name","Age","Sex","Mobile","Notes","Diagnosis","Visit Date","Follow-up Date"]],
         body: tableData
     });
 
